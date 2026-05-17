@@ -219,3 +219,6 @@ Or double-click `START_DASHBOARD.bat` on Windows.
 ## License
 
 Academic project — Tamil Nadu traffic signal optimisation using reinforcement learning.
+
+##NOTE
+simulation_log.csv was excluded because of GitHub upload size limits.
