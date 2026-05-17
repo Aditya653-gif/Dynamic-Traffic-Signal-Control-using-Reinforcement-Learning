@@ -1,0 +1,2659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Traffic Signal Control · Double DQN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   CSS CUSTOM PROPERTIES
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --bg:        #060a13;
+  --surface:   #0d1220;
+  --card:      #111827;
+  --border:    rgba(56,189,248,0.08);
+  --border-h:  rgba(56,189,248,0.18);
+  --cyan:      #06b6d4;
+  --cyan-dim:  rgba(6,182,212,0.15);
+  --purple:    #8b5cf6;
+  --purple-dim:rgba(139,92,246,0.15);
+  --emerald:   #10b981;
+  --emerald-d: rgba(16,185,129,0.15);
+  --rose:      #f43f5e;
+  --rose-dim:  rgba(244,63,94,0.12);
+  --amber:     #f59e0b;
+  --amber-dim: rgba(245,158,11,0.12);
+  --sig-green: #22c55e;
+  --sig-red:   #ef4444;
+  --sig-yellow:#eab308;
+  --text:      #f1f5f9;
+  --text-dim:  #94a3b8;
+  --text-muted:#64748b;
+  --glass:     rgba(15,23,42,0.82);
+  --glass-b:   12px;
+  --radius:    14px;
+  --radius-sm: 8px;
+  --mono:      'JetBrains Mono', monospace;
+  --sans:      'Inter', system-ui, sans-serif;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESET + BASE
+   ═══════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LOADING SCREEN
+   ═══════════════════════════════════════════════════════════ */
+#loading {
+  position: fixed; inset: 0; z-index: 9999;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  transition: opacity 0.8s, visibility 0.8s;
+}
+#loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.load-ring {
+  width: 56px; height: 56px;
+  border: 3px solid var(--border);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+.load-title {
+  margin-top: 24px; font-size: 1.1rem; font-weight: 600;
+  letter-spacing: 0.5px; color: var(--text-dim);
+}
+.load-sub {
+  margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);
+  font-family: var(--mono);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══════════════════════════════════════════════════════════
+   HEADER
+   ═══════════════════════════════════════════════════════════ */
+header {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+  height: 52px;
+  background: rgba(6,10,19,0.88);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 20px; gap: 14px;
+}
+.logo {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 1.05rem;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+.logo-icon {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  -webkit-text-fill-color: white;
+}
+.badge {
+  padding: 3px 10px; border-radius: 20px;
+  font-size: 0.72rem; font-weight: 600;
+  font-family: var(--mono); letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.badge-method {
+  background: var(--purple-dim);
+  color: var(--purple); border: 1px solid rgba(139,92,246,0.25);
+}
+.badge-live {
+  background: var(--emerald-d);
+  color: var(--emerald); border: 1px solid rgba(16,185,129,0.25);
+  display: flex; align-items: center; gap: 5px;
+}
+.badge-live::before {
+  content: ''; width: 6px; height: 6px;
+  background: var(--emerald); border-radius: 50%;
+  animation: pulse-dot 1.5s infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
+  50%     { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+}
+.header-clock {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 0.85rem;
+  color: var(--text-dim);
+  display: flex; align-items: center; gap: 12px;
+}
+.clock-sim {
+  padding: 3px 10px;
+  background: var(--amber-dim);
+  color: var(--amber);
+  border-radius: 20px; border: 1px solid rgba(245,158,11,0.2);
+  font-size: 0.72rem; font-weight: 600;
+}
+.header-ep {
+  padding: 3px 10px;
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  border-radius: 20px; border: 1px solid rgba(6,182,212,0.2);
+  font-size: 0.72rem; font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MAP SECTION
+   ═══════════════════════════════════════════════════════════ */
+.map-wrap {
+  position: relative;
+  margin-top: 52px;
+  height: calc(100vh - 52px);
+  min-height: 500px;
+}
+#map {
+  width: 100%; height: 100%;
+  background: var(--bg);
+}
+/* remove leaflet branding noise */
+.leaflet-control-attribution { display: none !important; }
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4) !important;
+}
+.leaflet-control-zoom a {
+  background: var(--card) !important;
+  color: var(--text-dim) !important;
+  border: 1px solid var(--border) !important;
+  width: 32px !important; height: 32px !important;
+  line-height: 32px !important; font-size: 16px !important;
+}
+.leaflet-control-zoom a:hover {
+  background: var(--surface) !important;
+  color: var(--cyan) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INTERSECTION MARKERS (Leaflet DivIcon)
+   ═══════════════════════════════════════════════════════════ */
+.ix-marker {
+  position: relative;
+  width: 110px; height: 120px;
+  pointer-events: auto;
+  filter: drop-shadow(0 0 20px rgba(6,182,212,0.15));
+}
+.ix-ring {
+  position: absolute;
+  top: 24px; left: 50%;
+  transform: translateX(-50%);
+  width: 50px; height: 50px;
+}
+.ix-center {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 14px; height: 14px;
+  background: radial-gradient(circle, var(--cyan) 0%, var(--surface) 100%);
+  border: 2px solid var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 12px rgba(6,182,212,0.5);
+  z-index: 2;
+}
+/* signal dots */
+.ix-sig {
+  position: absolute;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  z-index: 3;
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.ix-sig.n { top: 2px;    left: 50%; transform: translateX(-50%); }
+.ix-sig.s { bottom: 2px; left: 50%; transform: translateX(-50%); }
+.ix-sig.e { right: 2px;  top: 50%;  transform: translateY(-50%); }
+.ix-sig.w { left: 2px;   top: 50%;  transform: translateY(-50%); }
+.ix-sig.g {
+  background: var(--sig-green);
+  box-shadow: 0 0 10px var(--sig-green), 0 0 25px rgba(34,197,94,0.3);
+  animation: sig-glow 1.8s ease-in-out infinite;
+}
+.ix-sig.r {
+  background: var(--sig-red);
+  box-shadow: 0 0 5px rgba(239,68,68,0.3);
+}
+@keyframes sig-glow {
+  0%,100% { box-shadow: 0 0 10px var(--sig-green), 0 0 25px rgba(34,197,94,0.3); }
+  50%     { box-shadow: 0 0 18px var(--sig-green), 0 0 40px rgba(34,197,94,0.4); }
+}
+/* queue bars */
+.ix-qbar {
+  position: absolute;
+  background: var(--amber);
+  border-radius: 2px;
+  transition: width 0.6s ease, height 0.6s ease;
+  opacity: 0.7;
+}
+.ix-qbar.qn { width: 3px; left: 50%; transform: translateX(-50%); bottom: 50%; }
+.ix-qbar.qs { width: 3px; left: 50%; transform: translateX(-50%); top: 50%; }
+.ix-qbar.qe { height: 3px; top: 50%; transform: translateY(-50%); left: 50%; }
+.ix-qbar.qw { height: 3px; top: 50%; transform: translateY(-50%); right: 50%; }
+.ix-qbar.flow {
+  background: var(--sig-green);
+  animation: bar-flow 1s linear infinite;
+  opacity: 0.9;
+}
+@keyframes bar-flow {
+  0%   { opacity: 0.9; }
+  50%  { opacity: 0.5; }
+  100% { opacity: 0.9; }
+}
+/* city label */
+.ix-label {
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 10.5px; font-weight: 700;
+  color: var(--text);
+  text-shadow: 0 0 12px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.7);
+  letter-spacing: 0.4px;
+}
+.ix-badge {
+  position: absolute;
+  top: 14px; right: 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 8.5px; font-weight: 700;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.ix-badge.positive {
+  background: var(--emerald-d);
+  color: var(--emerald);
+  border: 1px solid rgba(16,185,129,0.3);
+}
+.ix-badge.negative {
+  background: var(--rose-dim);
+  color: var(--rose);
+  border: 1px solid rgba(244,63,94,0.3);
+}
+/* queue count labels */
+.ix-qcount {
+  position: absolute;
+  font-size: 8px; font-weight: 700;
+  font-family: var(--mono);
+  background: rgba(0,0,0,0.6);
+  padding: 0 3px; border-radius: 3px;
+  color: var(--text-dim);
+}
+.ix-qcount.cn { top: -2px;    left: 50%; transform: translateX(-50%); }
+.ix-qcount.cs { bottom: -2px; left: 50%; transform: translateX(-50%); }
+.ix-qcount.ce { right: -8px;  top: 50%;  transform: translateY(-50%); }
+.ix-qcount.cw { left: -8px;   top: 50%;  transform: translateY(-50%); }
+
+/* ═══════════════════════════════════════════════════════════
+   FLOATING GLASS PANELS
+   ═══════════════════════════════════════════════════════════ */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-b));
+  -webkit-backdrop-filter: blur(var(--glass-b));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* LEFT METRICS PANEL */
+.panel-metrics {
+  position: absolute;
+  top: 16px; left: 16px;
+  width: 280px;
+  z-index: 800;
+  padding: 18px;
+  transition: transform 0.3s;
+}
+.panel-title {
+  font-size: 0.82rem; font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 6px;
+}
+.panel-title::before {
+  content: ''; width: 3px; height: 14px;
+  background: linear-gradient(var(--cyan), var(--purple));
+  border-radius: 2px;
+}
+
+/* controller comparison blocks */
+.ctrl-block {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+}
+.ctrl-block.ai-block {
+  background: rgba(6,182,212,0.06);
+  border: 1px solid rgba(6,182,212,0.12);
+}
+.ctrl-block.trad-block {
+  background: rgba(245,158,11,0.06);
+  border: 1px solid rgba(245,158,11,0.12);
+}
+.ctrl-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.ctrl-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.ctrl-dot.ai   { background: var(--cyan); box-shadow: 0 0 8px rgba(6,182,212,0.5); }
+.ctrl-dot.trad { background: var(--amber); box-shadow: 0 0 8px rgba(245,158,11,0.5); }
+.ctrl-name {
+  font-size: 0.78rem; font-weight: 600;
+}
+.ctrl-name.ai   { color: var(--cyan); }
+.ctrl-name.trad { color: var(--amber); }
+.metric-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 0;
+}
+.metric-label {
+  font-size: 0.73rem; color: var(--text-muted);
+}
+.metric-val {
+  font-family: var(--mono);
+  font-size: 0.82rem; font-weight: 600;
+  color: var(--text);
+  transition: color 0.3s;
+}
+
+/* improvement section */
+.imp-block {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(16,185,129,0.06);
+  border: 1px solid rgba(16,185,129,0.12);
+}
+.imp-title {
+  font-size: 0.7rem; font-weight: 700;
+  color: var(--emerald);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+.imp-row {
+  display: flex; justify-content: space-between;
+  padding: 2px 0;
+}
+.imp-label { font-size: 0.73rem; color: var(--text-dim); }
+.imp-val {
+  font-family: var(--mono); font-size: 0.78rem; font-weight: 700;
+}
+.imp-val.pos { color: var(--emerald); }
+.imp-val.neg { color: var(--rose); }
+
+/* ═══════════════════════════════════════════════════════════
+   TRAINING PANEL (BOTTOM)
+   ═══════════════════════════════════════════════════════════ */
+.panel-training {
+  position: absolute;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 900px;
+  z-index: 800;
+  padding: 16px 20px;
+}
+.train-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.train-title {
+  font-size: 0.78rem; font-weight: 700;
+  color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.train-badges {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.train-badge {
+  padding: 2px 8px; border-radius: 12px;
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
+}
+.train-badge.ep  { background: var(--cyan-dim);    color: var(--cyan); }
+.train-badge.eps { background: var(--purple-dim);   color: var(--purple); }
+.train-badge.mem { background: var(--amber-dim);    color: var(--amber); }
+.train-phase {
+  margin-left: auto;
+  font-size: 0.72rem; font-weight: 600;
+  padding: 3px 10px; border-radius: 12px;
+}
+.phase-explore  { background: var(--purple-dim);   color: var(--purple); }
+.phase-learn    { background: var(--cyan-dim);     color: var(--cyan); }
+.phase-exploit  { background: var(--emerald-d);    color: var(--emerald); }
+
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.chart-card {
+  background: rgba(0,0,0,0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  border: 1px solid var(--border);
+}
+.chart-label {
+  font-size: 0.68rem; font-weight: 600;
+  color: var(--text-muted); margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.chart-card canvas { width: 100% !important; height: 100px !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   CITY INFO PANEL (RIGHT)
+   ═══════════════════════════════════════════════════════════ */
+.panel-city {
+  position: absolute;
+  top: 16px; right: 16px;
+  width: 240px; z-index: 800;
+  padding: 16px;
+  display: none;
+}
+.panel-city.show { display: block; animation: fadeSlide 0.3s ease; }
+@keyframes fadeSlide {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.city-detail-name {
+  font-size: 1rem; font-weight: 700;
+  margin-bottom: 4px;
+}
+.city-detail-pop {
+  font-size: 0.75rem; color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.city-signals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px; margin-bottom: 12px;
+}
+.city-sig-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  background: rgba(0,0,0,0.25);
+  border-radius: 6px;
+}
+.city-sig-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.city-sig-dot.sg { background: var(--sig-green); box-shadow: 0 0 6px var(--sig-green); }
+.city-sig-dot.sr { background: var(--sig-red); box-shadow: 0 0 4px rgba(239,68,68,0.3); }
+.city-sig-dir {
+  font-size: 0.72rem; font-weight: 600; color: var(--text-dim);
+}
+.city-sig-q {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 700;
+  color: var(--text);
+}
+.city-veh-title {
+  font-size: 0.7rem; font-weight: 700;
+  color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 6px;
+}
+.city-veh-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+}
+.city-veh-item {
+  display: flex; justify-content: space-between;
+  padding: 3px 6px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  font-size: 0.72rem;
+}
+.city-veh-type { color: var(--text-dim); }
+.city-veh-count { font-family: var(--mono); font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════
+   SUMMARY FOOTER (below map)
+   ═══════════════════════════════════════════════════════════ */
+.summary-section {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 28px 24px;
+}
+.summary-grid {
+  max-width: 1100px; margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.summary-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  text-align: center;
+  transition: border-color 0.3s, transform 0.3s;
+}
+.summary-card:hover {
+  border-color: var(--border-h);
+  transform: translateY(-2px);
+}
+.summary-icon {
+  font-size: 1.5rem; margin-bottom: 6px;
+}
+.summary-value {
+  font-family: var(--mono);
+  font-size: 1.4rem; font-weight: 700;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.summary-label {
+  font-size: 0.73rem; color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Method detail */
+.method-section {
+  max-width: 1100px; margin: 24px auto 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.method-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.method-card h3 {
+  font-size: 0.85rem; font-weight: 700;
+  margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.method-card h3 .dot-ai   { color: var(--cyan); }
+.method-card h3 .dot-trad { color: var(--amber); }
+.method-items {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.method-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; color: var(--text-dim);
+}
+.method-item::before {
+  content: '›'; color: var(--text-muted); font-weight: 700;
+}
+
+.badge-save {
+  background: rgba(56,189,248,0.1);
+  color: var(--cyan); border: 1px solid rgba(56,189,248,0.2);
+  display: flex; align-items: center; gap: 5px;
+}
+.badge-save .save-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--cyan);
+  transition: opacity 0.3s;
+}
+.badge-save.saving .save-dot {
+  animation: pulse-dot 0.5s ease 2;
+}
+.badge-dataset {
+  background: rgba(139,92,246,0.1);
+  color: var(--purple); border: 1px solid rgba(139,92,246,0.2);
+}
+
+/* Footer bar */
+.footer-bar {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 14px 24px;
+  text-align: center;
+  font-size: 0.72rem; color: var(--text-muted);
+}
+.footer-bar a {
+  color: var(--cyan); text-decoration: none;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   VEHICLE ANIMATION DOTS (on map)
+   ═══════════════════════════════════════════════════════════ */
+.veh-dot {
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  position: absolute;
+  background: var(--text);
+  opacity: 0;
+  animation: veh-fly 1.2s ease-out forwards;
+}
+.veh-dot.bike  { background: #38bdf8; }
+.veh-dot.car   { background: #e2e8f0; }
+.veh-dot.bus   { background: #fbbf24; }
+.veh-dot.truck { background: #fb923c; }
+@keyframes veh-fly {
+  0%   { opacity: 0.9; transform: translate(0,0); }
+  100% { opacity: 0; }
+}
+
+/* Road lines on map */
+.road-line {
+  stroke: rgba(148,163,184,0.12);
+  stroke-width: 2;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .panel-metrics { width: 240px; padding: 12px; top: 8px; left: 8px; }
+  .panel-training { width: calc(100% - 16px); padding: 12px; bottom: 8px; }
+  .charts-row { grid-template-columns: 1fr; }
+  .panel-city { display: none !important; }
+  .method-section { grid-template-columns: 1fr; }
+  header { padding: 0 12px; gap: 8px; }
+  .header-clock { gap: 6px; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LEAFLET POPUP OVERRIDE
+   ═══════════════════════════════════════════════════════════ */
+.leaflet-popup-content-wrapper {
+  background: var(--card) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+.leaflet-popup-tip { background: var(--card) !important; }
+.leaflet-popup-content { margin: 12px !important; font-size: 0.78rem; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.2); border-radius: 3px; }
+
+/* ═══════════════════════════════════════════════════════════
+   CONTROL PANEL (Scenario, Toggles)
+   ═══════════════════════════════════════════════════════════ */
+.panel-controls {
+  position: absolute;
+  top: 16px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 800;
+  padding: 10px 16px;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; max-width: 720px;
+}
+.ctrl-group {
+  display: flex; align-items: center; gap: 5px;
+}
+.ctrl-group-label {
+  font-size: 0.62rem; font-weight: 700;
+  color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; white-space: nowrap;
+  margin-right: 2px;
+}
+.ctrl-sep {
+  width: 1px; height: 20px;
+  background: var(--border); margin: 0 4px;
+}
+.scenario-btn {
+  padding: 3px 9px; border-radius: 14px;
+  font-size: 0.65rem; font-weight: 600;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+  cursor: pointer; transition: all 0.25s; white-space: nowrap;
+}
+.scenario-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.scenario-btn.active {
+  background: var(--cyan-dim); border-color: var(--cyan);
+  color: var(--cyan); box-shadow: 0 0 12px rgba(6,182,212,0.2);
+}
+.scenario-btn.emergency.active {
+  background: var(--rose-dim); border-color: var(--rose);
+  color: var(--rose); box-shadow: 0 0 12px rgba(244,63,94,0.2);
+}
+.scenario-btn.accident.active {
+  background: var(--amber-dim); border-color: var(--amber);
+  color: var(--amber); box-shadow: 0 0 12px rgba(245,158,11,0.2);
+}
+.scenario-btn.festival.active {
+  background: var(--purple-dim); border-color: var(--purple);
+  color: var(--purple); box-shadow: 0 0 12px rgba(139,92,246,0.2);
+}
+.toggle-btn {
+  padding: 3px 9px; border-radius: 14px;
+  font-size: 0.65rem; font-weight: 600;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+  cursor: pointer; transition: all 0.25s; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
+}
+.toggle-btn:hover { border-color: var(--emerald); color: var(--emerald); }
+.toggle-btn.on {
+  background: var(--emerald-d); border-color: var(--emerald);
+  color: var(--emerald);
+}
+.toggle-btn .t-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--text-muted); transition: background 0.25s;
+}
+.toggle-btn.on .t-dot {
+  background: var(--emerald); box-shadow: 0 0 6px var(--emerald);
+}
+.action-btn {
+  padding: 3px 9px; border-radius: 14px;
+  font-size: 0.65rem; font-weight: 600;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+  cursor: pointer; transition: all 0.25s; white-space: nowrap;
+}
+.action-btn:hover {
+  border-color: var(--purple); color: var(--purple);
+  background: var(--purple-dim);
+}
+
+/* Scenario map indicator */
+.scenario-indicator {
+  position: absolute; top: 72px; left: 50%;
+  transform: translateX(-50%); z-index: 790;
+  padding: 4px 14px; border-radius: 14px;
+  font-size: 0.68rem; font-weight: 600;
+  font-family: var(--mono); display: none;
+  animation: fadeIn 0.3s ease;
+}
+.scenario-indicator.show { display: flex; align-items: center; gap: 6px; }
+.scenario-indicator.emergency {
+  background: var(--rose-dim); color: var(--rose);
+  border: 1px solid rgba(244,63,94,0.25);
+}
+.scenario-indicator.accident {
+  background: var(--amber-dim); color: var(--amber);
+  border: 1px solid rgba(245,158,11,0.25);
+}
+.scenario-indicator.festival {
+  background: var(--purple-dim); color: var(--purple);
+  border: 1px solid rgba(139,92,246,0.25);
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ═══════════════════════════════════════════════════════════
+   HISTORY MODAL
+   ═══════════════════════════════════════════════════════════ */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(6px);
+  display: none; align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px 28px;
+  width: 640px; max-width: 95vw; max-height: 85vh;
+  overflow-y: auto; animation: modalIn 0.3s ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 18px;
+}
+.modal-title {
+  font-size: 1rem; font-weight: 700;
+  display: flex; align-items: center; gap: 8px;
+}
+.modal-title::before {
+  content: ''; width: 3px; height: 16px;
+  background: linear-gradient(var(--cyan), var(--purple)); border-radius: 2px;
+}
+.modal-close {
+  width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.modal-close:hover { border-color: var(--rose); color: var(--rose); }
+.hist-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 18px;
+}
+.hist-stat {
+  background: rgba(0,0,0,0.3); border-radius: var(--radius-sm);
+  padding: 12px; text-align: center; border: 1px solid var(--border);
+}
+.hist-stat-val {
+  font-family: var(--mono); font-size: 1.1rem; font-weight: 700;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.hist-stat-label {
+  font-size: 0.62rem; color: var(--text-muted); margin-top: 2px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.hist-chart-wrap {
+  background: rgba(0,0,0,0.25); border-radius: var(--radius-sm);
+  padding: 14px; border: 1px solid var(--border); margin-bottom: 14px;
+}
+.hist-chart-wrap canvas { width: 100% !important; height: 180px !important; }
+.hist-table {
+  width: 100%; border-collapse: collapse; font-size: 0.72rem;
+}
+.hist-table th {
+  text-align: left; padding: 6px 8px; color: var(--text-muted);
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--border); font-size: 0.62rem;
+}
+.hist-table td {
+  padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-family: var(--mono); color: var(--text-dim);
+}
+.hist-empty {
+  text-align: center; padding: 32px; color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   COORDINATED CONTROL
+   ═══════════════════════════════════════════════════════════ */
+.coord-label {
+  padding: 3px 10px; border-radius: 12px;
+  font-size: 0.65rem; font-weight: 600; font-family: var(--mono);
+  background: var(--emerald-d); color: var(--emerald);
+  border: 1px solid rgba(16,185,129,0.25);
+  display: none; animation: fadeIn 0.3s;
+}
+.coord-label.show { display: inline-flex; align-items: center; gap: 5px; }
+.coord-label::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--emerald); animation: pulse-dot 1.5s infinite;
+}
+
+/* ── Coordination Control Panel ──────────────────────────── */
+.panel-coord {
+  position: absolute;
+  top: 16px; right: 268px;
+  width: 280px; z-index: 800;
+  padding: 16px;
+  display: none;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+.panel-coord.show { display: block; animation: fadeSlide 0.3s ease; }
+.coord-panel-title {
+  font-size: 0.78rem; font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 6px;
+}
+.coord-panel-title::before {
+  content: ''; width: 3px; height: 14px;
+  background: linear-gradient(var(--emerald), var(--cyan));
+  border-radius: 2px;
+}
+.coord-cluster-card {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--border);
+  transition: border-color 0.3s;
+}
+.coord-cluster-card:hover { border-color: var(--border-h); }
+.cluster-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cluster-id-badge {
+  padding: 2px 8px; border-radius: 10px;
+  font-size: 0.62rem; font-weight: 700; font-family: var(--mono);
+  display: flex; align-items: center; gap: 4px;
+}
+.cluster-id-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.cluster-actions {
+  display: flex; gap: 4px;
+}
+.cluster-action-btn {
+  width: 20px; height: 20px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-muted); cursor: pointer; font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.cluster-action-btn:hover { border-color: var(--rose); color: var(--rose); }
+.cluster-action-btn.add:hover { border-color: var(--emerald); color: var(--emerald); }
+.cluster-info-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 2px 0;
+}
+.cluster-info-label {
+  font-size: 0.68rem; color: var(--text-muted);
+}
+.cluster-info-val {
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--text);
+}
+.cluster-nodes {
+  display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+}
+.cluster-node-chip {
+  padding: 1px 6px; border-radius: 8px;
+  font-size: 0.6rem; font-weight: 600; font-family: var(--mono);
+  background: rgba(0,0,0,0.3); color: var(--text-dim);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 3px;
+  cursor: default; transition: all 0.2s;
+}
+.cluster-node-chip .chip-remove {
+  cursor: pointer; color: var(--text-muted); font-size: 9px;
+  transition: color 0.2s; margin-left: 2px;
+}
+.cluster-node-chip .chip-remove:hover { color: var(--rose); }
+/* Cluster metrics */
+.cluster-metrics {
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.cluster-metric-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1px 0;
+}
+.cluster-metric-label { font-size: 0.62rem; color: var(--text-muted); }
+.cluster-metric-val {
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 700;
+}
+.cluster-metric-val.good { color: var(--emerald); }
+.cluster-metric-val.warn { color: var(--amber); }
+.cluster-metric-val.bad  { color: var(--rose); }
+/* Direction selector */
+.cluster-dir-select {
+  padding: 2px 6px; border-radius: 8px;
+  font-size: 0.62rem; font-weight: 600; font-family: var(--mono);
+  background: rgba(0,0,0,0.4); color: var(--text);
+  border: 1px solid var(--border); cursor: pointer;
+  transition: border-color 0.2s; appearance: none;
+  -webkit-appearance: none;
+}
+.cluster-dir-select:hover { border-color: var(--cyan); }
+/* Sync delay input */
+.cluster-delay-input {
+  width: 48px; padding: 2px 4px; border-radius: 6px;
+  font-size: 0.62rem; font-weight: 600; font-family: var(--mono);
+  background: rgba(0,0,0,0.4); color: var(--text);
+  border: 1px solid var(--border); text-align: center;
+}
+.cluster-delay-input:focus { border-color: var(--cyan); outline: none; }
+/* Coord panel buttons */
+.coord-btn-row {
+  display: flex; gap: 6px; margin-top: 8px;
+}
+.coord-btn {
+  flex: 1; padding: 5px 8px; border-radius: 10px;
+  font-size: 0.62rem; font-weight: 600; font-family: var(--mono);
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer; transition: all 0.2s;
+  text-align: center;
+}
+.coord-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.coord-btn.create { border-color: rgba(16,185,129,0.3); }
+.coord-btn.create:hover {
+  background: var(--emerald-d); border-color: var(--emerald); color: var(--emerald);
+}
+.coord-btn.clear { border-color: rgba(244,63,94,0.2); }
+.coord-btn.clear:hover {
+  background: var(--rose-dim); border-color: var(--rose); color: var(--rose);
+}
+/* Selection chips area */
+.coord-select-area {
+  padding: 8px; border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.2); border: 1px dashed var(--border);
+  margin-bottom: 8px; min-height: 32px;
+}
+.coord-select-hint {
+  font-size: 0.62rem; color: var(--text-muted); text-align: center;
+  font-family: var(--mono);
+}
+/* Direction config row */
+.coord-config-row {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+}
+.coord-config-label {
+  font-size: 0.62rem; color: var(--text-muted); white-space: nowrap;
+}
+/* Green wave arrow animations */
+@keyframes wave-pulse {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+@keyframes wave-flow-ns {
+  0% { transform: translateY(-8px); opacity: 0; }
+  50% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(8px); opacity: 0; }
+}
+@keyframes wave-flow-ew {
+  0% { transform: translateX(-8px); opacity: 0; }
+  50% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(8px); opacity: 0; }
+}
+/* Cluster overlay ring */
+.coord-cluster-ring {
+  border-radius: 50%; opacity: 0.15;
+  pointer-events: none;
+}
+/* Wave indicator badge on marker */
+.ix-wave-badge {
+  position: absolute; bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 6px; border-radius: 6px;
+  font-size: 7px; font-weight: 700; font-family: var(--mono);
+  white-space: nowrap; z-index: 5; pointer-events: none;
+  display: flex; align-items: center; gap: 3px;
+}
+.ix-wave-badge .wave-arrow {
+  font-size: 9px; animation: wave-pulse 1.2s ease-in-out infinite;
+}
+
+@media (max-width: 768px) {
+  .panel-coord { right: 8px; width: 240px; top: 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HEATMAP LEGEND
+   ═══════════════════════════════════════════════════════════ */
+.heatmap-legend {
+  position: absolute; bottom: 160px; right: 16px;
+  z-index: 800; padding: 10px 14px; display: none;
+}
+.heatmap-legend.show { display: block; }
+.heatmap-legend-title {
+  font-size: 0.65rem; font-weight: 700; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+.heatmap-gradient {
+  width: 120px; height: 10px; border-radius: 5px;
+  background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+  margin-bottom: 4px;
+}
+.heatmap-labels {
+  display: flex; justify-content: space-between;
+  font-size: 0.58rem; color: var(--text-muted); font-family: var(--mono);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DEPLOYMENT PANEL
+   ═══════════════════════════════════════════════════════════ */
+.deploy-section { max-width: 1100px; margin: 24px auto 0; }
+.deploy-toggle {
+  width: 100%; background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; transition: border-color 0.3s;
+  color: var(--text); font-family: var(--sans);
+}
+.deploy-toggle:hover { border-color: var(--border-h); }
+.deploy-toggle-title {
+  font-size: 0.85rem; font-weight: 700;
+  display: flex; align-items: center; gap: 8px;
+}
+.deploy-toggle-arrow {
+  font-size: 0.9rem; color: var(--text-muted); transition: transform 0.3s;
+}
+.deploy-toggle.open .deploy-toggle-arrow { transform: rotate(180deg); }
+.deploy-content {
+  max-height: 0; overflow: hidden; transition: max-height 0.4s ease;
+}
+.deploy-content.open { max-height: 600px; }
+.deploy-inner {
+  background: var(--card); border: 1px solid var(--border);
+  border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+  padding: 20px; display: grid;
+  grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.deploy-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px; border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.2); border: 1px solid var(--border);
+}
+.deploy-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 2px; }
+.deploy-item-title {
+  font-size: 0.78rem; font-weight: 600; color: var(--text); margin-bottom: 3px;
+}
+.deploy-item-desc {
+  font-size: 0.7rem; color: var(--text-muted); line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+  .panel-controls { max-width: 95vw; padding: 8px 10px; gap: 6px; }
+  .hist-stats { grid-template-columns: repeat(2, 1fr); }
+  .deploy-inner { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PLACEMENT MODE & DIRECTION PICKER
+   ═══════════════════════════════════════════════════════════ */
+
+/* Placement mode cursor & overlay styling */
+body.placement-mode #map { cursor: crosshair !important; }
+.placement-hint {
+  position: absolute; top: 72px; left: 50%;
+  transform: translateX(-50%); z-index: 800;
+  padding: 6px 16px; border-radius: 14px;
+  font-size: 0.7rem; font-weight: 600; font-family: var(--mono);
+  background: var(--glass); border: 1px solid var(--border);
+  backdrop-filter: blur(12px); color: var(--text);
+  display: none; align-items: center; gap: 8px;
+  animation: fadeIn 0.2s ease;
+}
+.placement-hint.show { display: flex; }
+.placement-hint .hint-icon {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+}
+.placement-hint .hint-close {
+  margin-left: 6px; cursor: pointer; color: var(--text-muted);
+  font-size: 14px; line-height: 1; transition: color 0.2s;
+}
+.placement-hint .hint-close:hover { color: var(--rose); }
+
+/* Direction picker popup */
+.dir-picker-overlay {
+  position: fixed; inset: 0; z-index: 8500;
+  background: rgba(0,0,0,0.5);
+  display: none; align-items: center; justify-content: center;
+}
+.dir-picker-overlay.show { display: flex; }
+.dir-picker {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+  width: 260px; animation: modalIn 0.2s ease;
+  text-align: center;
+}
+.dir-picker-title {
+  font-size: 0.82rem; font-weight: 700; margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.dir-picker-sub {
+  font-size: 0.68rem; color: var(--text-muted); margin-bottom: 14px;
+  font-family: var(--mono);
+}
+.dir-picker-grid {
+  display: grid; gap: 6px;
+  grid-template-areas: ". n ." "w c e" ". s .";
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-bottom: 12px;
+}
+.dir-btn {
+  padding: 8px 4px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: rgba(0,0,0,0.3);
+  color: var(--text); font-family: var(--mono); font-size: 0.72rem;
+  font-weight: 600; cursor: pointer; transition: all 0.2s;
+}
+.dir-btn:hover {
+  border-color: var(--cyan); color: var(--cyan);
+  background: var(--cyan-dim);
+}
+.dir-btn.north { grid-area: n; }
+.dir-btn.south { grid-area: s; }
+.dir-btn.east  { grid-area: e; }
+.dir-btn.west  { grid-area: w; }
+.dir-center-label {
+  grid-area: c; display: flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; color: var(--text-muted); font-family: var(--mono);
+}
+.dir-picker-cancel {
+  padding: 5px 14px; border-radius: 12px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); font-family: var(--mono); font-size: 0.68rem;
+  cursor: pointer; transition: all 0.2s;
+}
+.dir-picker-cancel:hover { border-color: var(--rose); color: var(--rose); }
+
+/* Scenario badge on marker */
+.ix-scenario-badge {
+  position: absolute; top: 4px; left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px; border-radius: 8px;
+  font-size: 7.5px; font-weight: 700; font-family: var(--mono);
+  white-space: nowrap; z-index: 5; pointer-events: none;
+  animation: fadeIn 0.3s ease;
+}
+.ix-scenario-badge.emergency {
+  background: var(--rose-dim); color: var(--rose);
+  border: 1px solid rgba(244,63,94,0.4);
+}
+.ix-scenario-badge.accident {
+  background: var(--amber-dim); color: var(--amber);
+  border: 1px solid rgba(245,158,11,0.4);
+}
+.ix-scenario-badge.festival {
+  background: var(--purple-dim); color: var(--purple);
+  border: 1px solid rgba(139,92,246,0.4);
+}
+
+/* Scenario ring glow on marker */
+.ix-ring.scenario-emergency { filter: drop-shadow(0 0 10px rgba(244,63,94,0.4)); }
+.ix-ring.scenario-accident  { filter: drop-shadow(0 0 10px rgba(245,158,11,0.4)); }
+.ix-ring.scenario-festival  { filter: drop-shadow(0 0 10px rgba(139,92,246,0.4)); }
+
+/* Coord selected glow on marker */
+.ix-ring.coord-selected { filter: drop-shadow(0 0 12px rgba(16,185,129,0.5)); }
+.ix-coord-badge {
+  position: absolute; top: 4px; right: -4px;
+  padding: 1px 5px; border-radius: 6px;
+  font-size: 7px; font-weight: 700; font-family: var(--mono);
+  background: var(--emerald-d); color: var(--emerald);
+  border: 1px solid rgba(16,185,129,0.4);
+  z-index: 5; pointer-events: none; white-space: nowrap;
+}
+
+/* Active scenario count badge in control panel */
+.scenario-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; border-radius: 8px;
+  font-size: 9px; font-weight: 700; font-family: var(--mono);
+  margin-left: 4px; padding: 0 4px;
+}
+.scenario-count.hide { display: none; }
+</style>
+</head>
+
+<body>
+
+<!-- ═══════════════ LOADING SCREEN ═══════════════ -->
+<div id="loading">
+  <div class="load-ring"></div>
+  <div class="load-title">Initializing Traffic AI</div>
+  <div class="load-sub">Connecting to simulation engine…</div>
+</div>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🚦</div>
+    Traffic Signal Control
+  </div>
+  <span class="badge badge-method">Double DQN</span>
+  <span class="badge badge-live">LIVE</span>
+  <span class="badge badge-save" id="hdr-save" title="Auto-saves every 5 episodes"><span class="save-dot"></span>Auto-Save</span>
+  <span class="badge badge-dataset" id="hdr-dataset">Dataset</span>
+  <span class="coord-label" id="coord-label">Coordinated Adaptive Control Active</span>
+  <div class="header-clock">
+    <span class="clock-sim" id="hdr-clock">00:00</span>
+    <span class="header-ep" id="hdr-episode">Episode 0</span>
+  </div>
+</header>
+
+<!-- ═══════════════ MAP ═══════════════ -->
+<div class="map-wrap">
+  <div id="map"></div>
+
+  <!-- Left: Metrics Panel -->
+  <div class="panel-metrics glass" id="panel-metrics">
+    <div class="panel-title">Real-Time Comparison</div>
+
+    <div class="ctrl-block ai-block">
+      <div class="ctrl-header">
+        <div class="ctrl-dot ai"></div>
+        <div class="ctrl-name ai">AI Controller · Double DQN</div>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Avg Wait Time</span>
+        <span class="metric-val" id="ai-wait">0.00s</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Queue Length</span>
+        <span class="metric-val" id="ai-queue">0</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Throughput</span>
+        <span class="metric-val" id="ai-thru">0.0/min</span>
+      </div>
+    </div>
+
+    <div class="ctrl-block trad-block">
+      <div class="ctrl-header">
+        <div class="ctrl-dot trad"></div>
+        <div class="ctrl-name trad">Traditional · Fixed Timer</div>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Avg Wait Time</span>
+        <span class="metric-val" id="tr-wait">0.00s</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Queue Length</span>
+        <span class="metric-val" id="tr-queue">0</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Throughput</span>
+        <span class="metric-val" id="tr-thru">0.0/min</span>
+      </div>
+    </div>
+
+    <div class="imp-block">
+      <div class="imp-title">AI Improvement</div>
+      <div class="imp-row">
+        <span class="imp-label">Wait Time</span>
+        <span class="imp-val" id="imp-wait">0%</span>
+      </div>
+      <div class="imp-row">
+        <span class="imp-label">Queue Reduction</span>
+        <span class="imp-val" id="imp-queue">0%</span>
+      </div>
+      <div class="imp-row">
+        <span class="imp-label">Throughput Gain</span>
+        <span class="imp-val" id="imp-thru">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: City Detail Panel -->
+  <div class="panel-city glass" id="panel-city">
+    <div class="city-detail-name" id="city-name">—</div>
+    <div class="city-detail-pop" id="city-pop"></div>
+    <div class="city-signals" id="city-signals"></div>
+    <div class="city-veh-title">Vehicle Breakdown (AI)</div>
+    <div class="city-veh-grid" id="city-vehs"></div>
+  </div>
+
+  <!-- Bottom: Training Panel -->
+  <div class="panel-training glass" id="panel-training">
+    <div class="train-header">
+      <div class="train-title">Double DQN Training</div>
+      <div class="train-badges">
+        <span class="train-badge ep"  id="tb-ep">Ep 0</span>
+        <span class="train-badge eps" id="tb-eps">ε 1.00</span>
+        <span class="train-badge mem" id="tb-mem">Mem 0</span>
+      </div>
+      <div class="train-phase" id="tb-phase">Exploration Phase</div>
+    </div>
+    <div class="charts-row">
+      <div class="chart-card">
+        <div class="chart-label">Reward / Episode</div>
+        <canvas id="chart-reward"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Training Loss</div>
+        <canvas id="chart-loss"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Exploration Rate (ε)</div>
+        <canvas id="chart-eps"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Control Panel -->
+  <div class="panel-controls glass" id="panel-controls">
+    <div class="ctrl-group">
+      <span class="ctrl-group-label">Scenario</span>
+      <button class="scenario-btn active" data-scenario="normal" onclick="setScenario('normal')">Normal</button>
+      <button class="scenario-btn emergency" data-scenario="emergency" onclick="setScenario('emergency')">🚨 Emergency</button>
+      <button class="scenario-btn accident" data-scenario="accident" onclick="setScenario('accident')">⚠️ Accident</button>
+      <button class="scenario-btn festival" data-scenario="festival" onclick="setScenario('festival')">🎉 Festival</button>
+      <button class="action-btn" id="btn-clear-scenarios" onclick="clearAllScenarios()" style="font-size:0.6rem">✕ Clear</button>
+    </div>
+    <div class="ctrl-sep"></div>
+    <div class="ctrl-group">
+      <button class="toggle-btn" id="btn-heatmap" onclick="toggleHeatmap()"><span class="t-dot"></span>Heatmap</button>
+      <button class="toggle-btn" id="btn-coordinated" onclick="toggleCoordinated()"><span class="t-dot"></span>Coordinated</button>
+    </div>
+    <div class="ctrl-sep"></div>
+    <button class="action-btn" onclick="openHistoryModal()">📊 History</button>
+  </div>
+
+  <!-- Placement Hint -->
+  <div class="placement-hint" id="placement-hint">
+    <span class="hint-icon" id="hint-icon"></span>
+    <span id="hint-text"></span>
+    <span class="hint-close" onclick="cancelPlacement()">✕</span>
+  </div>
+
+  <!-- Scenario Indicator -->
+  <div class="scenario-indicator" id="scenario-indicator"></div>
+
+  <!-- Heatmap Legend -->
+  <div class="heatmap-legend glass" id="heatmap-legend">
+    <div class="heatmap-legend-title">Congestion Level</div>
+    <div class="heatmap-gradient"></div>
+    <div class="heatmap-labels"><span>Low</span><span>Med</span><span>High</span></div>
+  </div>
+
+  <!-- Coordination Control Panel -->
+  <div class="panel-coord glass" id="panel-coord">
+    <div class="coord-panel-title">Coordinated Adaptive Control</div>
+
+    <!-- Selection area for creating new clusters -->
+    <div class="coord-select-area" id="coord-select-area">
+      <div class="coord-select-hint" id="coord-select-hint">Click intersections on the map to select nodes</div>
+      <div class="cluster-nodes" id="coord-pending-nodes"></div>
+    </div>
+
+    <!-- Config row -->
+    <div class="coord-config-row">
+      <span class="coord-config-label">Direction:</span>
+      <select class="cluster-dir-select" id="coord-new-direction">
+        <option value="NS">North-South</option>
+        <option value="EW">East-West</option>
+      </select>
+      <span class="coord-config-label">Delay:</span>
+      <input type="number" class="cluster-delay-input" id="coord-new-delay" value="2.0" min="0.5" max="10" step="0.5">
+      <span class="coord-config-label">sec</span>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="coord-btn-row">
+      <button class="coord-btn create" id="btn-create-cluster" onclick="createCluster()">+ Create Cluster</button>
+      <button class="coord-btn clear" onclick="clearAllClusters()">✕ Clear All</button>
+    </div>
+
+    <!-- Existing clusters list -->
+    <div id="coord-clusters-list" style="margin-top:10px"></div>
+  </div>
+
+</div>
+
+<!-- History Modal -->
+<div class="modal-overlay" id="history-modal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title">Historical Performance (Last 10 Runs)</div>
+      <button class="modal-close" onclick="closeHistoryModal()">&times;</button>
+    </div>
+    <div class="hist-stats" id="hist-stats">
+      <div class="hist-empty" style="grid-column:1/-1">Loading...</div>
+    </div>
+    <div class="hist-chart-wrap">
+      <canvas id="hist-trend-chart"></canvas>
+    </div>
+    <table class="hist-table">
+      <thead><tr><th>Episode</th><th>AI Wait</th><th>Trad Wait</th><th>Queue</th><th>Improvement</th><th>Scenario</th></tr></thead>
+      <tbody id="hist-table-body"><tr><td colspan="6" class="hist-empty">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Direction Picker Popup -->
+<div class="dir-picker-overlay" id="dir-picker-overlay">
+  <div class="dir-picker">
+    <div class="dir-picker-title" id="dir-picker-title">Select Direction</div>
+    <div class="dir-picker-sub" id="dir-picker-sub">Choose the affected lane</div>
+    <div class="dir-picker-grid">
+      <button class="dir-btn north" onclick="pickDirection('North')">↑ North</button>
+      <button class="dir-btn west"  onclick="pickDirection('West')">← West</button>
+      <div class="dir-center-label" id="dir-center-city">●</div>
+      <button class="dir-btn east"  onclick="pickDirection('East')">East →</button>
+      <button class="dir-btn south" onclick="pickDirection('South')">↓ South</button>
+    </div>
+    <button class="dir-picker-cancel" onclick="cancelDirPicker()">Cancel</button>
+  </div>
+</div>
+
+<!-- ═══════════════ SUMMARY ═══════════════ -->
+<section class="summary-section">
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="summary-icon">🏙️</div>
+      <div class="summary-value" id="sum-cities">7</div>
+      <div class="summary-label">Intersections Monitored</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-icon">🚗</div>
+      <div class="summary-value" id="sum-vehs">0</div>
+      <div class="summary-label">Active Vehicles (AI)</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-icon">🧠</div>
+      <div class="summary-value" id="sum-ep">0</div>
+      <div class="summary-label">Training Episodes</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-icon">📈</div>
+      <div class="summary-value" id="sum-imp">0%</div>
+      <div class="summary-label">Wait Time Reduction</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-icon">⏱️</div>
+      <div class="summary-value" id="sum-elapsed">0s</div>
+      <div class="summary-label">Simulation Running</div>
+    </div>
+  </div>
+
+  <div class="method-section">
+    <div class="method-card">
+      <h3><span class="dot-ai">●</span> AI Controller — Double DQN</h3>
+      <div class="method-items">
+        <div class="method-item">9-dimensional state: queue lengths + phase encoding + timer</div>
+        <div class="method-item">Neural network: 128 → 128 hidden units (ReLU)</div>
+        <div class="method-item">Double DQN: policy selects, target evaluates</div>
+        <div class="method-item">Experience replay buffer (10,000 transitions)</div>
+        <div class="method-item">ε-greedy exploration with annealing</div>
+        <div class="method-item">Adapts green time to real-time queue demand</div>
+      </div>
+    </div>
+    <div class="method-card">
+      <h3><span class="dot-trad">●</span> Traditional Controller — Fixed Timer</h3>
+      <div class="method-items">
+        <div class="method-item">Fixed 30-second cycle per direction</div>
+        <div class="method-item">Sequential rotation: N → S → E → W</div>
+        <div class="method-item">No adaptation to traffic conditions</div>
+        <div class="method-item">Baseline approach used at most Indian intersections</div>
+        <div class="method-item">Equal time regardless of queue length</div>
+        <div class="method-item">Wastes green time on empty approaches</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-World Deployment Possibilities -->
+  <div class="deploy-section">
+    <button class="deploy-toggle" id="deploy-toggle" onclick="toggleDeploy()">
+      <span class="deploy-toggle-title">🌐 Real-World Deployment Possibilities</span>
+      <span class="deploy-toggle-arrow">▼</span>
+    </button>
+    <div class="deploy-content" id="deploy-content">
+      <div class="deploy-inner">
+        <div class="deploy-item">
+          <span class="deploy-icon">📹</span>
+          <div><div class="deploy-item-title">CCTV-Based Vehicle Detection</div>
+          <div class="deploy-item-desc">Computer vision models (YOLO, SSD) process live CCTV feeds for real-time vehicle counting and classification at each intersection approach.</div></div>
+        </div>
+        <div class="deploy-item">
+          <span class="deploy-icon">📡</span>
+          <div><div class="deploy-item-title">IoT-Enabled Smart Signal Controllers</div>
+          <div class="deploy-item-desc">Edge devices with embedded RL agents communicate via MQTT/LoRaWAN to coordinate signal phases across corridors in real time.</div></div>
+        </div>
+        <div class="deploy-item">
+          <span class="deploy-icon">🔗</span>
+          <div><div class="deploy-item-title">Smart City API Integration</div>
+          <div class="deploy-item-desc">RESTful APIs connect with municipal traffic management centres, emergency dispatch systems, and Google Maps Traffic data feeds.</div></div>
+        </div>
+        <div class="deploy-item">
+          <span class="deploy-icon">☁️</span>
+          <div><div class="deploy-item-title">Cloud-Based Centralized Monitoring</div>
+          <div class="deploy-item-desc">AWS/Azure-hosted dashboard aggregates data from hundreds of intersections with centralized model training and OTA policy updates.</div></div>
+        </div>
+        <div class="deploy-item">
+          <span class="deploy-icon">⚡</span>
+          <div><div class="deploy-item-title">Edge-Based Local Signal Optimization</div>
+          <div class="deploy-item-desc">NVIDIA Jetson or Coral TPU at each intersection runs lightweight DQN inference locally with sub-100ms decision latency.</div></div>
+        </div>
+        <div class="deploy-item">
+          <span class="deploy-icon">🚑</span>
+          <div><div class="deploy-item-title">Emergency Vehicle Preemption</div>
+          <div class="deploy-item-desc">GPS-equipped emergency vehicles broadcast priority requests; RL agent learns to create green corridors while minimizing cross-traffic disruption.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="footer-bar">
+  Traffic Signal Control using Deep Reinforcement Learning · Double DQN Methodology · Tamil Nadu, India
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ═══════════════════════════════════════════════════════════ -->
+<script>
+// ── Globals ─────────────────────────────────────────────
+let map, markers = {}, roadLines = [], selectedCity = null;
+let rewardChart, lossChart, epsChart;
+let prevState = null;
+
+const DIRS = ['North','South','East','West'];
+const DIR_SHORT = {North:'N',South:'S',East:'E',West:'W'};
+
+// Road offsets for queue bars & vehicle animation
+const DIR_OFFSET = {
+  North: {lat: 0.012, lng: 0},
+  South: {lat:-0.012, lng: 0},
+  East:  {lat: 0, lng: 0.014},
+  West:  {lat: 0, lng:-0.014},
+};
+
+// ── Map Initialisation ─────────────────────────────────
+function initMap() {
+  map = L.map('map', {
+    center: [11.2, 78.8],
+    zoom: 7,
+    zoomControl: true,
+    attributionControl: false,
+  });
+
+  // Dark tiles
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18,
+    subdomains: 'abcd',
+  }).addTo(map);
+
+  // Move zoom control to bottom-right
+  map.zoomControl.setPosition('bottomright');
+}
+
+// ── Chart Initialisation ────────────────────────────────
+function initCharts() {
+  const gridColor = 'rgba(148,163,184,0.08)';
+  const baseOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 400 },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(17,24,39,0.95)',
+        titleColor: '#f1f5f9',
+        bodyColor: '#94a3b8',
+        borderColor: 'rgba(56,189,248,0.15)',
+        borderWidth: 1,
+        padding: 8,
+        titleFont: { family: 'Inter', weight: '600', size: 11 },
+        bodyFont: { family: 'JetBrains Mono', size: 10 },
+      },
+    },
+    scales: {
+      x: {
+        display: false,
+        grid: { display: false },
+      },
+      y: {
+        ticks: { font: { family: 'JetBrains Mono', size: 9 }, color: '#64748b', maxTicksLimit: 4 },
+        grid: { color: gridColor, lineWidth: 0.5 },
+        border: { display: false },
+      },
+    },
+    elements: {
+      point: { radius: 0 },
+      line: { borderWidth: 2, tension: 0.3 },
+    },
+  };
+
+  rewardChart = new Chart(document.getElementById('chart-reward'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: '#06b6d4',
+        backgroundColor: 'rgba(6,182,212,0.08)',
+        fill: true,
+      }],
+    },
+    options: { ...baseOpts },
+  });
+
+  lossChart = new Chart(document.getElementById('chart-loss'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: '#8b5cf6',
+        backgroundColor: 'rgba(139,92,246,0.08)',
+        fill: true,
+      }],
+    },
+    options: { ...baseOpts },
+  });
+
+  epsChart = new Chart(document.getElementById('chart-eps'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.08)',
+        fill: true,
+      }],
+    },
+    options: { ...baseOpts },
+  });
+}
+
+// ── Create intersection marker ──────────────────────────
+function buildMarkerHTML(city, data, scenarioMap, coordGroup, greenWave, coordClusters) {
+  const ai = data.ai;
+  const signals = ai.signals;
+  const queues  = ai.queues;
+
+  function sigClass(d) { return signals[d] === 'green' ? 'g' : 'r'; }
+  function qHeight(d) { return Math.min(queues[d] * 2.5, 28); }
+  function qWidth(d)  { return Math.min(queues[d] * 2.5, 28); }
+  function barFlow(d) { return signals[d] === 'green' ? ' flow' : ''; }
+
+  // Scenario badge & ring class
+  const sc = scenarioMap ? scenarioMap[city] : null;
+  let scenarioBadge = '';
+  let ringExtraClass = '';
+  if (sc) {
+    const st = sc.type;
+    const sd = sc.direction || '';
+    const labels = { emergency: '🚨 EMERGENCY · ' + sd, accident: '⚠️ BLOCKED · ' + sd, festival: '🎉 FESTIVAL' };
+    scenarioBadge = '<div class="ix-scenario-badge ' + st + '">' + (labels[st] || '') + '</div>';
+    ringExtraClass = ' scenario-' + st;
+  }
+
+  // Coord badge — now shows cluster color & wave state
+  const isCoord = coordGroup && coordGroup.includes(city);
+  let coordBadge = '';
+  let coordRingClass = '';
+  let waveBadge = '';
+  if (isCoord && greenWave && greenWave[city]) {
+    const gw = greenWave[city];
+    const color = gw.color || '#10b981';
+    coordRingClass = ' coord-selected';
+    coordBadge = '<div class="ix-coord-badge" style="background:' + color + '22;color:' + color + ';border-color:' + color + '55">C' + gw.cluster_id + ' #' + (gw.order + 1) + '</div>';
+    // Wave direction arrow
+    const arrow = gw.direction === 'NS' ? '↓' : '→';
+    const waveClass = gw.in_wave ? 'good' : '';
+    waveBadge = '<div class="ix-wave-badge" style="background:' + color + '18;color:' + color + ';border:1px solid ' + color + '33"><span class="wave-arrow">' + arrow + '</span>' + (gw.in_wave ? 'WAVE' : 'SYNC') + '</div>';
+  } else if (isCoord) {
+    coordBadge = '<div class="ix-coord-badge">SYNC</div>';
+    coordRingClass = ' coord-selected';
+  }
+  // Highlight pending coord selection
+  const isPending = coordPendingCities && coordPendingCities.includes(city);
+  if (isPending) {
+    coordRingClass = ' coord-selected';
+    coordBadge = '<div class="ix-coord-badge" style="background:rgba(6,182,212,0.2);color:var(--cyan);border-color:rgba(6,182,212,0.4)">SELECT</div>';
+  }
+
+  return `
+    <div class="ix-marker">
+      ${scenarioBadge}
+      <div class="ix-ring${ringExtraClass}${coordRingClass}">
+        <div class="ix-center"></div>
+        <div class="ix-sig n ${sigClass('North')}"></div>
+        <div class="ix-sig s ${sigClass('South')}"></div>
+        <div class="ix-sig e ${sigClass('East')}"></div>
+        <div class="ix-sig w ${sigClass('West')}"></div>
+        <div class="ix-qbar qn${barFlow('North')}" style="height:${qHeight('North')}px"></div>
+        <div class="ix-qbar qs${barFlow('South')}" style="height:${qHeight('South')}px"></div>
+        <div class="ix-qbar qe${barFlow('East')}"  style="width:${qWidth('East')}px"></div>
+        <div class="ix-qbar qw${barFlow('West')}"  style="width:${qWidth('West')}px"></div>
+        <div class="ix-qcount cn">${queues.North}</div>
+        <div class="ix-qcount cs">${queues.South}</div>
+        <div class="ix-qcount ce">${queues.East}</div>
+        <div class="ix-qcount cw">${queues.West}</div>
+      </div>
+      ${coordBadge}
+      ${waveBadge}
+      <div class="ix-label">${city}</div>
+    </div>`;
+}
+
+function createMarker(city, data) {
+  const html = buildMarkerHTML(city, data, null, null, null, null);
+  const icon = L.divIcon({
+    className: '',
+    html: html,
+    iconSize: [110, 120],
+    iconAnchor: [55, 60],
+  });
+
+  const marker = L.marker([data.lat, data.lng], { icon: icon }).addTo(map);
+  marker.on('click', () => onMarkerClick(city));
+  markers[city] = marker;
+
+  // Draw road lines
+  for (const d of DIRS) {
+    const off = DIR_OFFSET[d];
+    const line = L.polyline(
+      [[data.lat, data.lng], [data.lat + off.lat, data.lng + off.lng]],
+      { color: 'rgba(148,163,184,0.1)', weight: 2, dashArray: '4 6' }
+    ).addTo(map);
+    roadLines.push(line);
+  }
+}
+
+// ── Update intersection marker ──────────────────────────
+function updateMarker(city, data, scenarioMap, coordGroup, greenWave, coordClusters) {
+  const html = buildMarkerHTML(city, data, scenarioMap, coordGroup, greenWave, coordClusters);
+  const icon = L.divIcon({
+    className: '',
+    html: html,
+    iconSize: [110, 120],
+    iconAnchor: [55, 60],
+  });
+  markers[city].setIcon(icon);
+}
+
+// ── Vehicle animation dots ──────────────────────────────
+let vehLayer = null;
+function spawnVehicleDots(state) {
+  if (!vehLayer) {
+    vehLayer = L.layerGroup().addTo(map);
+  }
+  // Limit simultaneous animated dots
+  if (vehLayer.getLayers().length > 80) return;
+
+  for (const [city, data] of Object.entries(state.cities)) {
+    const ai = data.ai;
+    const green = ai.phase;
+    // Spawn departing vehicles on green direction
+    const off = DIR_OFFSET[green];
+    const dep = Math.min(ai.metrics.departed > 0 ? 2 : 0, 3);
+    for (let i = 0; i < dep; i++) {
+      const jitter = (Math.random() - 0.5) * 0.003;
+      const dot = L.circleMarker(
+        [data.lat + off.lat * 0.3 * (i+1) + jitter, data.lng + off.lng * 0.3 * (i+1) + jitter],
+        { radius: 2.5, color: 'transparent',
+          fillColor: ['#38bdf8','#e2e8f0','#fbbf24','#fb923c'][Math.floor(Math.random()*4)],
+          fillOpacity: 0.8, }
+      ).addTo(vehLayer);
+      // Remove after animation time
+      setTimeout(() => { try { vehLayer.removeLayer(dot); } catch(e){} }, 1200);
+    }
+  }
+}
+
+// ── City detail panel ───────────────────────────────────
+function showCityDetail(city) {
+  selectedCity = city;
+  document.getElementById('panel-city').classList.add('show');
+}
+
+function updateCityDetail(state) {
+  if (!selectedCity || !state.cities[selectedCity]) return;
+  const data = state.cities[selectedCity];
+  const ai = data.ai;
+
+  document.getElementById('city-name').textContent = selectedCity;
+  document.getElementById('city-pop').textContent = `Population: ${data.pop} · ${data.type}`;
+
+  const sigHtml = DIRS.map(d => {
+    const isGreen = ai.signals[d] === 'green';
+    return `<div class="city-sig-item">
+      <div class="city-sig-dot ${isGreen ? 'sg' : 'sr'}"></div>
+      <span class="city-sig-dir">${d}</span>
+      <span class="city-sig-q">${ai.queues[d]}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('city-signals').innerHTML = sigHtml;
+
+  const vehs = ai.vehicles;
+  const vehHtml = Object.entries(vehs).map(([type, count]) =>
+    `<div class="city-veh-item">
+      <span class="city-veh-type">${type.charAt(0).toUpperCase() + type.slice(1)}</span>
+      <span class="city-veh-count">${count}</span>
+    </div>`
+  ).join('');
+  document.getElementById('city-vehs').innerHTML = vehHtml;
+}
+
+// ── Metrics update ──────────────────────────────────────
+function updateMetrics(state) {
+  // AI metrics
+  setText('ai-wait',  state.ai.avg_wait.toFixed(2) + 's');
+  setText('ai-queue', state.ai.total_queue);
+  setText('ai-thru',  state.ai.throughput.toFixed(1) + '/min');
+
+  // Traditional metrics
+  setText('tr-wait',  state.trad.avg_wait.toFixed(2) + 's');
+  setText('tr-queue', state.trad.total_queue);
+  setText('tr-thru',  state.trad.throughput.toFixed(1) + '/min');
+
+  // Improvement
+  setImp('imp-wait', state.improvement.wait, true);
+  setImp('imp-queue', state.improvement.queue, true);
+  setImp('imp-thru', state.improvement.throughput, false);
+}
+
+function setText(id, val) {
+  document.getElementById(id).textContent = val;
+}
+
+function setImp(id, val, higherBetter) {
+  const el = document.getElementById(id);
+  const prefix = val >= 0 ? '↓' : '↑';
+  const display = val >= 0 ? `${prefix}${Math.abs(val).toFixed(1)}%` : `${prefix}${Math.abs(val).toFixed(1)}%`;
+  el.textContent = display;
+  el.className = 'imp-val ' + (val >= 0 ? 'pos' : 'neg');
+}
+
+// ── Training update ─────────────────────────────────────
+let _lastSaveEp = 0;
+function updateTraining(state) {
+  const t = state.training;
+
+  // Header badges
+  setText('hdr-clock', state.clock.display);
+  setText('hdr-episode', `Episode ${t.episode}`);
+  setText('tb-ep', `Ep ${t.episode}`);
+  setText('tb-eps', `ε ${t.epsilon.toFixed(3)}`);
+  setText('tb-mem', `Mem ${t.memory}`);
+
+  // Checkpoint status
+  if (state.checkpoint) {
+    const saveEl = document.getElementById('hdr-save');
+    const dsEl   = document.getElementById('hdr-dataset');
+    if (state.checkpoint.last_save_ep > _lastSaveEp) {
+      saveEl.classList.add('saving');
+      setTimeout(() => saveEl.classList.remove('saving'), 1200);
+      _lastSaveEp = state.checkpoint.last_save_ep;
+    }
+    saveEl.innerHTML = `<span class="save-dot"></span>Saved Ep ${state.checkpoint.last_save_ep}`;
+    dsEl.textContent = state.checkpoint.dataset_loaded ? 'Dataset ✓' : 'Synthetic';
+  }
+
+  // Phase indicator
+  const phEl = document.getElementById('tb-phase');
+  if (t.epsilon > 0.5) {
+    phEl.textContent = 'Exploration Phase';
+    phEl.className = 'train-phase phase-explore';
+  } else if (t.epsilon > 0.1) {
+    phEl.textContent = 'Learning Phase';
+    phEl.className = 'train-phase phase-learn';
+  } else {
+    phEl.textContent = 'Exploitation Phase';
+    phEl.className = 'train-phase phase-exploit';
+  }
+
+  // Charts
+  if (t.rewards.length > 0) {
+    const labels = t.rewards.map((_, i) => i + 1);
+    rewardChart.data.labels = labels;
+    rewardChart.data.datasets[0].data = t.rewards;
+    rewardChart.update('none');
+
+    lossChart.data.labels = labels;
+    lossChart.data.datasets[0].data = t.losses;
+    lossChart.update('none');
+
+    epsChart.data.labels = labels;
+    epsChart.data.datasets[0].data = t.epsilons;
+    epsChart.update('none');
+  }
+}
+
+// ── Summary update ──────────────────────────────────────
+function updateSummary(state) {
+  setText('sum-cities', state.summary.cities_count);
+  setText('sum-vehs', state.summary.vehicles_ai);
+  setText('sum-ep', state.training.episode);
+
+  const impVal = state.improvement.wait;
+  setText('sum-imp', (impVal >= 0 ? '↓' : '↑') + Math.abs(impVal).toFixed(1) + '%');
+
+  const elapsed = state.clock.elapsed;
+  if (elapsed < 60) {
+    setText('sum-elapsed', Math.round(elapsed) + 's');
+  } else {
+    const min = Math.floor(elapsed / 60);
+    const sec = Math.round(elapsed % 60);
+    setText('sum-elapsed', `${min}m ${sec}s`);
+  }
+}
+
+// ── SSE Connection ──────────────────────────────────────
+
+// ── Scenario Control (Dynamic Placement) ────────────────
+let scenarioOverlays = [];
+let placementMode = null;    // null | 'emergency' | 'accident' | 'festival'
+let placementCity  = null;   // city selected during placement
+let coordSelectMode = false; // true when user is clicking markers to build coord group
+
+function setScenario(scenario) {
+  // Activate placement mode – user will click an intersection next
+  if (placementMode === scenario) { cancelPlacement(); return; }
+  placementMode = scenario;
+  placementCity = null;
+  document.querySelectorAll('.scenario-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.scenario === scenario);
+  });
+  document.body.classList.add('placement-mode');
+  const hint = document.getElementById('placement-hint');
+  const labels = { emergency: '🚨 Click an intersection to place Emergency', accident: '⚠️ Click an intersection to place Accident', festival: '🎉 Click intersections to apply Festival' };
+  hint.textContent = labels[scenario] || 'Click an intersection';
+  hint.classList.add('show');
+}
+
+function cancelPlacement() {
+  placementMode = null;
+  placementCity = null;
+  document.body.classList.remove('placement-mode');
+  document.getElementById('placement-hint').classList.remove('show');
+  document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
+}
+
+function cancelDirPicker() {
+  document.getElementById('dir-picker-overlay').classList.remove('show');
+  // Don't cancel placement mode for festival (multi-select)
+  if (placementMode !== 'festival') cancelPlacement();
+}
+
+function pickDirection(dir) {
+  if (!placementCity || !placementMode) return;
+  document.getElementById('dir-picker-overlay').classList.remove('show');
+  fetch('/api/scenario', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ city: placementCity, type: placementMode, direction: dir }),
+  });
+  cancelPlacement();
+}
+
+function clearAllScenarios() {
+  fetch('/api/scenario', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clear_all: true }),
+  });
+  cancelPlacement();
+}
+
+function onMarkerClick(city) {
+  // Coordinated selection mode
+  if (coordSelectMode) {
+    onCoordCityClick(city);
+    return;
+  }
+  // Scenario placement mode
+  if (placementMode) {
+    placementCity = city;
+    if (placementMode === 'festival') {
+      // Festival: no direction needed, apply immediately
+      fetch('/api/scenario', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city: city, type: 'festival' }),
+      });
+      // Stay in placement mode for multi-select
+      return;
+    }
+    // Emergency / Accident: show direction picker
+    document.getElementById('dir-center-city').textContent = city;
+    document.getElementById('dir-picker-overlay').classList.add('show');
+    return;
+  }
+  // Default: show city detail
+  showCityDetail(city);
+}
+
+function updateScenarioIndicator(state) {
+  const ind = document.getElementById('scenario-indicator');
+  const scenarioMap = state.scenario || {};
+  const cities = Object.keys(scenarioMap);
+
+  // Remove old map overlays
+  scenarioOverlays.forEach(o => { try { map.removeLayer(o); } catch(e){} });
+  scenarioOverlays = [];
+
+  if (cities.length === 0) {
+    ind.className = 'scenario-indicator';
+    return;
+  }
+
+  // Summary indicator
+  const counts = {};
+  cities.forEach(c => { const t = scenarioMap[c].type; counts[t] = (counts[t]||0) + 1; });
+  const parts = [];
+  if (counts.emergency) parts.push('🚨 Emergency × ' + counts.emergency);
+  if (counts.accident)  parts.push('⚠️ Accident × ' + counts.accident);
+  if (counts.festival)  parts.push('🎉 Festival × ' + counts.festival);
+  ind.className = 'scenario-indicator show ' + Object.keys(counts)[0];
+  ind.textContent = parts.join('  ·  ');
+
+  // Draw per-city overlays
+  const colorMap = { emergency: '#f43f5e', accident: '#f59e0b', festival: '#a855f7' };
+  const fillMap  = { emergency: 'rgba(244,63,94,0.12)', accident: 'rgba(245,158,11,0.12)', festival: 'rgba(168,85,247,0.12)' };
+  const emojiMap = { emergency: '🚨 PRIORITY', accident: '⚠️ BLOCKED', festival: '🎉 FESTIVAL' };
+
+  cities.forEach(c => {
+    const sc = scenarioMap[c];
+    const cd = state.cities[c];
+    if (!cd) return;
+    const col = colorMap[sc.type] || '#06b6d4';
+    const fill = fillMap[sc.type] || 'rgba(6,182,212,0.12)';
+    const circ = L.circleMarker([cd.lat, cd.lng], {
+      radius: 28, color: col, fillColor: fill,
+      fillOpacity: 0.5, weight: 2, dashArray: '4 4',
+    }).addTo(map);
+    scenarioOverlays.push(circ);
+    const dirText = sc.direction ? ' · ' + sc.direction : '';
+    const lbl = L.marker([cd.lat + 0.018, cd.lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="background:' + fill + ';border:1px solid ' + col + '55;color:' + col + ';padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;font-family:JetBrains Mono;white-space:nowrap">' + emojiMap[sc.type] + dirText + '</div>',
+        iconSize: [130, 18], iconAnchor: [65, 9],
+      })
+    }).addTo(map);
+    scenarioOverlays.push(lbl);
+  });
+}
+
+// ── Historical Performance ──────────────────────────────
+let histChart = null;
+
+async function openHistoryModal() {
+  const modal = document.getElementById('history-modal');
+  modal.classList.add('show');
+  try {
+    const res = await fetch('/api/history');
+    const data = await res.json();
+    renderHistory(data);
+  } catch (e) {
+    console.error('History fetch error:', e);
+  }
+}
+
+function closeHistoryModal() {
+  document.getElementById('history-modal').classList.remove('show');
+}
+
+function renderHistory(data) {
+  const statsEl = document.getElementById('hist-stats');
+  const chartEl = document.getElementById('hist-trend-chart');
+  const tableEl = document.getElementById('hist-table-body');
+
+  if (!data.records || data.records.length === 0) {
+    statsEl.innerHTML = '<div class="hist-empty" style="grid-column:1/-1">No simulation runs recorded yet. Data is collected every episode.</div>';
+    tableEl.innerHTML = '<tr><td colspan="6" class="hist-empty">Waiting for data...</td></tr>';
+    return;
+  }
+
+  const s = data.summary;
+  statsEl.innerHTML =
+    '<div class="hist-stat"><div class="hist-stat-val">' + s.avg_improvement + '%</div><div class="hist-stat-label">Avg Reduction</div></div>' +
+    '<div class="hist-stat"><div class="hist-stat-val">' + s.best + '%</div><div class="hist-stat-label">Best Case</div></div>' +
+    '<div class="hist-stat"><div class="hist-stat-val">' + s.worst + '%</div><div class="hist-stat-label">Worst Case</div></div>' +
+    '<div class="hist-stat"><div class="hist-stat-val">\u00b1' + s.std + '%</div><div class="hist-stat-label">Std Deviation</div></div>';
+
+  const labels = data.records.map(r => 'Ep ' + r.episode);
+  const aiWaits = data.records.map(r => r.ai_avg_wait);
+  const tradWaits = data.records.map(r => r.trad_avg_wait);
+
+  if (histChart) histChart.destroy();
+  histChart = new Chart(chartEl, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        { label: 'AI Wait', data: aiWaits, borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.1)', fill: true, tension: 0.3 },
+        { label: 'Traditional Wait', data: tradWaits, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } } },
+        tooltip: { backgroundColor: 'rgba(17,24,39,0.95)', titleColor: '#f1f5f9', bodyColor: '#94a3b8', borderColor: 'rgba(56,189,248,0.15)', borderWidth: 1 },
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 9 } }, grid: { color: 'rgba(148,163,184,0.08)' } },
+        y: { ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 9 } }, grid: { color: 'rgba(148,163,184,0.08)' }, border: { display: false } },
+      },
+      elements: { point: { radius: 3, hoverRadius: 5 }, line: { borderWidth: 2 } },
+    },
+  });
+
+  tableEl.innerHTML = data.records.map(r =>
+    '<tr><td>' + r.episode + '</td><td>' + r.ai_avg_wait + 's</td><td>' + r.trad_avg_wait + 's</td><td>' + r.ai_queue + '</td>' +
+    '<td style="color:' + (r.improvement_pct >= 0 ? '#10b981' : '#f43f5e') + '">' + r.improvement_pct + '%</td><td>' + r.scenario + '</td></tr>'
+  ).join('');
+}
+
+// Close modal on overlay click
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay')) {
+    e.target.classList.remove('show');
+  }
+});
+
+// ── Live Traffic Heatmap ────────────────────────────────
+let heatmapLayer = null;
+let heatmapEnabled = false;
+
+function toggleHeatmap() {
+  heatmapEnabled = !heatmapEnabled;
+  document.getElementById('btn-heatmap').classList.toggle('on', heatmapEnabled);
+  document.getElementById('heatmap-legend').classList.toggle('show', heatmapEnabled);
+  if (!heatmapEnabled && heatmapLayer) {
+    map.removeLayer(heatmapLayer);
+    heatmapLayer = null;
+  }
+}
+
+function updateHeatmapLayer(state) {
+  if (!heatmapEnabled || !state.heatmap) return;
+  const points = state.heatmap.map(h => [h.lat, h.lng, h.intensity]);
+  if (heatmapLayer) map.removeLayer(heatmapLayer);
+  heatmapLayer = L.heatLayer(points, {
+    radius: 40, blur: 30, maxZoom: 10,
+    gradient: { 0.0: '#22c55e', 0.4: '#22c55e', 0.6: '#eab308', 0.8: '#f59e0b', 1.0: '#ef4444' },
+  }).addTo(map);
+}
+
+// ── Coordinated Multi-Cluster Control ────────────────────
+let coordLines = [];
+let coordBadges = [];
+let coordOverlays = [];
+let coordPendingCities = [];  // cities selected but not yet formed into a cluster
+let coordAddingToCluster = null; // cluster_id when adding a node to existing cluster
+
+function toggleCoordinated() {
+  coordSelectMode = !coordSelectMode;
+  document.getElementById('btn-coordinated').classList.toggle('on', coordSelectMode);
+  const panel = document.getElementById('panel-coord');
+  const label = document.getElementById('coord-label');
+  if (coordSelectMode) {
+    panel.classList.add('show');
+    label.classList.add('show');
+    label.textContent = 'COORDINATION MODE ACTIVE';
+    document.body.classList.add('placement-mode');
+    cancelPlacement();
+    coordPendingCities = [];
+    coordAddingToCluster = null;
+    renderPendingNodes();
+  } else {
+    panel.classList.remove('show');
+    label.classList.remove('show');
+    document.body.classList.remove('placement-mode');
+    coordPendingCities = [];
+    coordAddingToCluster = null;
+  }
+}
+
+function onCoordCityClick(city) {
+  // If we're adding to an existing cluster
+  if (coordAddingToCluster !== null) {
+    fetch('/api/coordination/cluster', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action:'add', cluster_id: coordAddingToCluster, city: city}),
+    }).then(() => { coordAddingToCluster = null; });
+    return;
+  }
+  // Toggle city in pending selection
+  const idx = coordPendingCities.indexOf(city);
+  if (idx >= 0) {
+    coordPendingCities.splice(idx, 1);
+  } else {
+    coordPendingCities.push(city);
+  }
+  renderPendingNodes();
+}
+
+function renderPendingNodes() {
+  const container = document.getElementById('coord-pending-nodes');
+  const hint = document.getElementById('coord-select-hint');
+  if (coordPendingCities.length === 0) {
+    container.innerHTML = '';
+    hint.style.display = 'block';
+    return;
+  }
+  hint.style.display = 'none';
+  container.innerHTML = coordPendingCities.map(c =>
+    '<div class="cluster-node-chip">' + c +
+    '<span class="chip-remove" onclick="removePendingCity(\'' + c + '\')">&times;</span></div>'
+  ).join('');
+}
+
+function removePendingCity(city) {
+  coordPendingCities = coordPendingCities.filter(c => c !== city);
+  renderPendingNodes();
+}
+
+function createCluster() {
+  if (coordPendingCities.length < 2) return;
+  const direction = document.getElementById('coord-new-direction').value;
+  const delay = parseFloat(document.getElementById('coord-new-delay').value) || 2.0;
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      action: 'create',
+      cities: coordPendingCities,
+      direction: direction,
+      sync_delay: delay,
+    }),
+  }).then(r => r.json()).then(data => {
+    if (data.status === 'ok') {
+      coordPendingCities = [];
+      renderPendingNodes();
+    }
+  });
+}
+
+function deleteCluster(cid) {
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'delete', cluster_id: cid}),
+  });
+}
+
+function removeNodeFromCluster(cid, city) {
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'remove', cluster_id: cid, city: city}),
+  });
+}
+
+function startAddToCluster(cid) {
+  coordAddingToCluster = cid;
+  const label = document.getElementById('coord-label');
+  label.textContent = 'Click an intersection to add to Cluster #' + cid;
+}
+
+function updateClusterDirection(cid, dir) {
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'update', cluster_id: cid, direction: dir}),
+  });
+}
+
+function updateClusterDelay(cid, delay) {
+  const val = parseFloat(delay);
+  if (isNaN(val) || val < 0.5) return;
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'update', cluster_id: cid, sync_delay: val}),
+  });
+}
+
+function clearAllClusters() {
+  fetch('/api/coordination/cluster', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'clear_all'}),
+  }).then(() => {
+    coordPendingCities = [];
+    renderPendingNodes();
+  });
+}
+
+function clearCoordGroup() {
+  clearAllClusters();
+  coordSelectMode = false;
+  document.getElementById('btn-coordinated').classList.remove('on');
+  document.getElementById('coord-label').classList.remove('show');
+  document.getElementById('panel-coord').classList.remove('show');
+  document.body.classList.remove('placement-mode');
+}
+
+function renderClustersPanel(state) {
+  const container = document.getElementById('coord-clusters-list');
+  const clusters = state.coord_clusters || {};
+  const metrics = state.coord_metrics || {};
+  const clusterIds = Object.keys(clusters);
+  if (clusterIds.length === 0) {
+    container.innerHTML = '<div style="font-size:0.62rem;color:var(--text-muted);text-align:center;padding:8px;font-family:var(--mono)">No clusters created yet</div>';
+    return;
+  }
+  let html = '';
+  for (const cid of clusterIds) {
+    const cl = clusters[cid];
+    const m = metrics[cid] || {};
+    const color = cl.color || '#10b981';
+    const dirLabel = cl.direction === 'NS' ? 'North-South' : 'East-West';
+    const dirArrow = cl.direction === 'NS' ? '↕' : '↔';
+    const syncClass = (m.sync_pct || 0) >= 70 ? 'good' : (m.sync_pct || 0) >= 40 ? 'warn' : 'bad';
+    const flowClass = (m.flow_efficiency || 0) >= 0 ? 'good' : 'bad';
+    html += '<div class="coord-cluster-card" style="border-left:3px solid ' + color + '">';
+    html += '<div class="cluster-header">';
+    html += '<div class="cluster-id-badge" style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '44">';
+    html += '<span class="cluster-id-dot" style="background:' + color + '"></span> Cluster #' + cid + '</div>';
+    html += '<div class="cluster-actions">';
+    html += '<button class="cluster-action-btn add" title="Add node" onclick="startAddToCluster(' + cid + ')">+</button>';
+    html += '<button class="cluster-action-btn" title="Delete cluster" onclick="deleteCluster(' + cid + ')">✕</button>';
+    html += '</div></div>';
+    // Info rows
+    html += '<div class="cluster-info-row"><span class="cluster-info-label">Nodes</span><span class="cluster-info-val">' + cl.cities.length + '</span></div>';
+    html += '<div class="cluster-info-row"><span class="cluster-info-label">Direction</span>';
+    html += '<select class="cluster-dir-select" onchange="updateClusterDirection(' + cid + ', this.value)">';
+    html += '<option value="NS"' + (cl.direction==='NS'?' selected':'') + '>↕ North-South</option>';
+    html += '<option value="EW"' + (cl.direction==='EW'?' selected':'') + '>↔ East-West</option>';
+    html += '</select></div>';
+    html += '<div class="cluster-info-row"><span class="cluster-info-label">Sync Delay</span>';
+    html += '<input type="number" class="cluster-delay-input" value="' + cl.sync_delay + '" min="0.5" max="10" step="0.5" onchange="updateClusterDelay(' + cid + ', this.value)"> sec</div>';
+    // Node chips
+    html += '<div class="cluster-nodes">';
+    const ordered = cl.ordered_cities || cl.cities;
+    ordered.forEach((c, i) => {
+      html += '<div class="cluster-node-chip" style="border-color:' + color + '44">';
+      if (i > 0) html += '<span style="color:' + color + ';font-size:8px;margin-right:1px">' + dirArrow + '</span>';
+      html += c + '<span class="chip-remove" onclick="removeNodeFromCluster(' + cid + ',\'' + c + '\')">&times;</span></div>';
+    });
+    html += '</div>';
+    // Performance metrics
+    if (m.cluster_id) {
+      html += '<div class="cluster-metrics">';
+      html += '<div class="cluster-metric-row"><span class="cluster-metric-label">Avg Cluster Wait</span>';
+      html += '<span class="cluster-metric-val ' + (m.avg_wait < 3 ? 'good' : m.avg_wait < 6 ? 'warn' : 'bad') + '">' + m.avg_wait + 's</span></div>';
+      html += '<div class="cluster-metric-row"><span class="cluster-metric-label">Flow Efficiency</span>';
+      html += '<span class="cluster-metric-val ' + flowClass + '">' + (m.flow_efficiency >= 0 ? '+' : '') + m.flow_efficiency + '%</span></div>';
+      html += '<div class="cluster-metric-row"><span class="cluster-metric-label">Signal Sync</span>';
+      html += '<span class="cluster-metric-val ' + syncClass + '">' + m.sync_pct + '%</span></div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+// ── Green Wave & Animated Directional Indicators ─────────
+function updateCoordinatedVisual(state) {
+  // Clean up old overlays
+  coordLines.forEach(o => { try { map.removeLayer(o); } catch(e){} });
+  coordBadges.forEach(o => { try { map.removeLayer(o); } catch(e){} });
+  coordOverlays.forEach(o => { try { map.removeLayer(o); } catch(e){} });
+  coordLines = [];
+  coordBadges = [];
+  coordOverlays = [];
+
+  const clusters = state.coord_clusters || {};
+  const greenWave = state.green_wave || {};
+  const group = state.coord_group || [];
+  const clusterIds = Object.keys(clusters);
+
+  // Render the panel
+  if (document.getElementById('panel-coord').classList.contains('show')) {
+    renderClustersPanel(state);
+  }
+
+  // Update header label
+  const label = document.getElementById('coord-label');
+  if (clusterIds.length > 0 && !coordSelectMode) {
+    label.classList.add('show');
+    const totalNodes = Object.values(clusters).reduce((s,c) => s + c.cities.length, 0);
+    label.textContent = '🔗 ' + clusterIds.length + ' Cluster' + (clusterIds.length>1?'s':'') + ' · ' + totalNodes + ' Nodes Synced';
+  } else if (!coordSelectMode && clusterIds.length === 0) {
+    label.classList.remove('show');
+  }
+
+  // Draw per-cluster visuals
+  for (const cid of clusterIds) {
+    const cl = clusters[cid];
+    const color = cl.color || '#10b981';
+    const ordered = cl.ordered_cities || cl.cities;
+    const direction = cl.direction;
+
+    // Subtle cluster overlay circles
+    for (const city of cl.cities) {
+      if (!state.cities[city]) continue;
+      const cd = state.cities[city];
+      const ring = L.circleMarker([cd.lat, cd.lng], {
+        radius: 22, color: color, fillColor: color,
+        fillOpacity: 0.06, weight: 1.5, opacity: 0.3,
+        dashArray: '3 3',
+      }).addTo(map);
+      coordOverlays.push(ring);
+    }
+
+    // Animated directional connection lines between ordered nodes
+    const now = Date.now();
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const cityA = ordered[i];
+      const cityB = ordered[i + 1];
+      if (!state.cities[cityA] || !state.cities[cityB]) continue;
+      const a = state.cities[cityA];
+      const b = state.cities[cityB];
+
+      // Main connection line
+      const baseLine = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+        color: color, weight: 2, opacity: 0.25, dashArray: '8 6',
+      }).addTo(map);
+      coordLines.push(baseLine);
+
+      // Animated pulse line (simulates green wave movement)
+      const wavePhase = ((now / 1000) - (i * cl.sync_delay)) % (cl.sync_delay * ordered.length);
+      const pulseOpacity = 0.3 + 0.5 * Math.max(0, Math.sin(wavePhase * Math.PI / cl.sync_delay));
+      const pulseLine = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+        color: color, weight: 3.5, opacity: pulseOpacity,
+      }).addTo(map);
+      coordLines.push(pulseLine);
+
+      // Direction arrow indicator at midpoint
+      const midLat = (a.lat + b.lat) / 2;
+      const midLng = (a.lng + b.lng) / 2;
+      const arrow = direction === 'NS' ? '▼' : '▶';
+      const animDelay = (i * 0.3).toFixed(1);
+      const arrowMarker = L.marker([midLat, midLng], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div style="color:' + color + ';font-size:14px;text-align:center;text-shadow:0 0 8px ' + color + ';animation:wave-pulse 1.2s ease-in-out ' + animDelay + 's infinite;line-height:1">' + arrow + '</div>',
+          iconSize: [20, 20], iconAnchor: [10, 10],
+        }),
+        interactive: false,
+      }).addTo(map);
+      coordOverlays.push(arrowMarker);
+
+      // Animated flowing dots along the path
+      const dotCount = 3;
+      for (let d = 0; d < dotCount; d++) {
+        const progress = ((now / 2000 + d / dotCount + i * 0.2) % 1);
+        const dotLat = a.lat + (b.lat - a.lat) * progress;
+        const dotLng = a.lng + (b.lng - a.lng) * progress;
+        const dotOpacity = Math.sin(progress * Math.PI) * 0.7;
+        const dot = L.circleMarker([dotLat, dotLng], {
+          radius: 3, color: color, fillColor: color,
+          fillOpacity: dotOpacity, weight: 0,
+        }).addTo(map);
+        coordOverlays.push(dot);
+      }
+    }
+  }
+}
+
+// ── Deployment Panel ────────────────────────────────────
+function toggleDeploy() {
+  document.getElementById('deploy-toggle').classList.toggle('open');
+  document.getElementById('deploy-content').classList.toggle('open');
+}
+
+// ── SSE Connection ──────────────────────────────────────
+function connectSSE() {
+  const source = new EventSource('/api/stream');
+
+  source.onopen = () => {
+    console.log('SSE connected');
+    setTimeout(() => document.getElementById('loading').classList.add('hidden'), 800);
+  };
+
+  source.onmessage = (event) => {
+    try {
+      const state = JSON.parse(event.data);
+      if (!state.cities) return;
+
+      // Create or update markers
+      const scenarioMap = state.scenario || {};
+      const coordGroup  = state.coord_group || [];
+      const greenWave   = state.green_wave || {};
+      const coordClusters = state.coord_clusters || {};
+      for (const [city, data] of Object.entries(state.cities)) {
+        if (!markers[city]) {
+          createMarker(city, data);
+        }
+        // Always update to reflect scenario/coord badges
+        updateMarker(city, data, scenarioMap, coordGroup, greenWave, coordClusters);
+      }
+
+      // Animate vehicle dots
+      spawnVehicleDots(state);
+
+      // Update panels
+      updateMetrics(state);
+      updateTraining(state);
+      updateSummary(state);
+      updateCityDetail(state);
+
+      // New feature updates
+      updateScenarioIndicator(state);
+      updateHeatmapLayer(state);
+      updateCoordinatedVisual(state);
+
+      prevState = state;
+    } catch (e) {
+      console.error('SSE parse error:', e);
+    }
+  };
+
+  source.onerror = () => {
+    console.warn('SSE error, reconnecting in 3s...');
+    source.close();
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+// ── Close city panel when clicking map ──────────────────
+function initMapClickClose() {
+  map.on('click', (e) => {
+    // Check if click was on a marker
+    let onMarker = false;
+    for (const m of Object.values(markers)) {
+      const pos = map.latLngToContainerPoint(m.getLatLng());
+      const click = map.latLngToContainerPoint(e.latlng);
+      if (Math.abs(pos.x - click.x) < 55 && Math.abs(pos.y - click.y) < 60) {
+        onMarker = true; break;
+      }
+    }
+    if (!onMarker) {
+      // Cancel placement / coord select when clicking empty map
+      if (placementMode) { cancelPlacement(); return; }
+      if (coordSelectMode) { toggleCoordinated(); return; }
+      selectedCity = null;
+      document.getElementById('panel-city').classList.remove('show');
+    }
+  });
+}
+
+// ── Initialise ──────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  initCharts();
+  initMapClickClose();
+  connectSSE();
+});
+</script>
+</body>
+</html>
